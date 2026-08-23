@@ -936,6 +936,67 @@ def _update_capability_db(
 
 
 # ---------------------------------------------------------------------------
+# Dashboard-editable Known Catalog additions (custom_catalog.json)
+# ---------------------------------------------------------------------------
+# Read-only from here: this file is written by web/plugins/sidebar/monitoring_compliance
+# .py's AJAX endpoint (the Known Catalog dashboard tab's "+ Add application"/Edit/Delete
+# actions). Layered into detection below so an entry added through the dashboard actually
+# gets recognized on hosts, not just displayed on the catalog reference page -- the same
+# custom_rules/TITLES/HINTS shapes a host-specific "Custom capability mappings" entry
+# (the check-parameter list above) already produces. A tombstoned entry (null value) only
+# ever affects the dashboard's own catalog *view*; it has no representation here and
+# cannot suppress built-in detection (use "Ignore processes/programs (regex)" for that).
+
+def _dashboard_catalog_path(custom_path: str | None = None) -> str | None:
+    if custom_path:
+        return custom_path
+    omd_root = os.environ.get("OMD_ROOT")
+    if not omd_root:
+        return None
+    return os.path.join(omd_root, "var", "monitoring_compliance", "custom_catalog.json")
+
+
+def _load_dashboard_catalog_entries(custom_path: str | None = None) -> Mapping[str, Any]:
+    """Best-effort: any problem reading/parsing this file must never break the check."""
+    path = _dashboard_catalog_path(custom_path)
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        entries = data.get("entries") if isinstance(data, dict) else None
+        return entries if isinstance(entries, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _dashboard_catalog_rules(
+    entries: Mapping[str, Any],
+) -> tuple[list[dict[str, str]], dict[str, str], dict[str, str]]:
+    """Turns dashboard catalog entries into (custom_rules, titles, hints) -- the same
+    shapes _resolve_token()'s custom_rules parameter and the TITLES/HINTS lookups below
+    already use, so the two mechanisms combine transparently."""
+    rules: list[dict[str, str]] = []
+    titles: dict[str, str] = {}
+    hints: dict[str, str] = {}
+    for token, override in entries.items():
+        if not isinstance(override, dict):
+            continue  # tombstone (None) or malformed -- irrelevant for detection
+        tok = str(token).strip().lower()
+        if not tok:
+            continue
+        for pattern in override.get("patterns") or []:
+            pattern = str(pattern).strip()
+            if pattern:
+                rules.append({"pattern": pattern, "token": tok})
+        if override.get("title"):
+            titles[tok] = str(override["title"])
+        if override.get("hint"):
+            hints[tok] = str(override["hint"])
+    return rules, titles, hints
+
+
+# ---------------------------------------------------------------------------
 # Filtering helpers
 # ---------------------------------------------------------------------------
 
@@ -1025,6 +1086,23 @@ def check_monitoring_compliance(
     ign_proc = _compile(params.get("ignored_processes", []) or [])
     ign_prog = _compile(params.get("ignored_programs", []) or [])
     custom_rules = list(params.get("custom_catalog", []) or [])
+    custom_titles: dict[str, str] = {}
+    custom_hints: dict[str, str] = {}
+    for rule in custom_rules:
+        tok = str(rule.get("token", "")).strip().lower()
+        if tok and rule.get("title"):
+            custom_titles[tok] = str(rule["title"])
+        if tok and rule.get("enable_hint"):
+            custom_hints[tok] = str(rule["enable_hint"])
+
+    if not params.get("ignore_dashboard_catalog"):
+        dash_rules, dash_titles, dash_hints = _dashboard_catalog_rules(
+            _load_dashboard_catalog_entries())
+        custom_rules = custom_rules + dash_rules
+        # A host-specific "Custom capability mappings" entry (this rule's own list,
+        # checked first above) wins over a site-wide dashboard entry for the same token.
+        custom_titles = {**dash_titles, **custom_titles}
+        custom_hints = {**dash_hints, **custom_hints}
 
     usage_evidence = _usage_evidence(
         section_df, section_zfsget, section_systemd_units, section_md, section_services,
@@ -1109,7 +1187,7 @@ def check_monitoring_compliance(
     monitored_count = 0
 
     for token, app in apps.items():
-        title = TITLES.get(token, token.replace("_", " ").title())
+        title = custom_titles.get(token) or TITLES.get(token, token.replace("_", " ").title())
         covering = sorted(mon_idx.get(token, set()))
         if covering:
             monitored_count += 1
@@ -1124,7 +1202,7 @@ def check_monitoring_compliance(
             st = State.OK if info_only else state_installed
             msg = f"{title}: present, not running, not monitored"
         cands = sorted(avail_idx.get(token, set()))
-        hint = HINTS.get(token)
+        hint = custom_hints.get(token) or HINTS.get(token)
         if hint:
             msg += f" \u2013 {hint}"
         elif cands:
@@ -1208,6 +1286,7 @@ check_plugin_monitoring_compliance = CheckPlugin(
         "ignored_processes": [],
         "ignored_programs": [],
         "custom_catalog": [],
+        "ignore_dashboard_catalog": False,
         "disable_capability_db": False,
     },
 )

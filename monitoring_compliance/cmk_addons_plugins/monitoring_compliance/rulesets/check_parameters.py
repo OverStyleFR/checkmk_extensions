@@ -103,6 +103,23 @@ def _form():
                     element_template=_custom_rule(),
                 ),
             ),
+            "ignore_dashboard_catalog": DictElement(
+                parameter_form=BooleanChoice(
+                    title=Title("Ignore the Known Catalog dashboard's custom entries"),
+                    label=Label("Do not use custom_catalog.json for detection"),
+                    help_text=Help(
+                        "By default, entries added through the Monitoring Compliance "
+                        "dashboard's Known Catalog tab (stored in "
+                        "$OMD_ROOT/var/monitoring_compliance/custom_catalog.json) are "
+                        "also used for detection here, exactly like an entry in the "
+                        "'Custom capability mappings' list above -- a host-specific "
+                        "mapping in that list still takes precedence over a dashboard "
+                        "entry for the same token. Enable this to ignore the dashboard's "
+                        "entries on this host and rely only on this rule's own list plus "
+                        "the extension's built-in detection tables."
+                    ),
+                ),
+            ),
             "disable_capability_db": DictElement(
                 parameter_form=BooleanChoice(
                     title=Title("Do not write the capability database"),

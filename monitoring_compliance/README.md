@@ -40,6 +40,46 @@ changes as fast as the HW/SW inventory is refreshed.
 | `Checkmk Capability Database` | Statistics about the persistent capability database (file size, entry counts, distinct hosts/tokens, last update). Enable "Report capability database statistics" in the special-agent rule on exactly one host (e.g. the Checkmk server). |
 | `Checkmk Known Catalog` | Read-only reference listing the application types the detection knows about (alias/signature/title tables), annotated with plug-in availability on this site. Always OK, informational only. Enable "Report known catalog" in the special-agent rule. |
 
+## GUI Dashboard
+
+A **Monitoring Compliance** sidebar snap-in (add it via the sidebar's "Add snap-in"
+button) links to a standalone dashboard page listing both databases in full, browsable
+and searchable/sortable/filterable form — well beyond what the two services' plain-text
+notices show:
+
+- **Capability Database** tab — every capability ever observed, deduplicated, with type,
+  name, token, the hosts it was seen on, monitorable/monitored flags and first/last-seen
+  timestamps.
+- **Known Catalog** tab — every application type the detection logic recognizes, with its
+  matching name patterns, a deployment hint, and whether a covering plug-in is currently
+  available on this site (re-checked against `cmk -L`, so a plug-in from a freshly
+  uploaded MKP shows up here too). **Editable**: use "+ Add application" or a row's
+  Edit/Delete buttons to add, change or remove catalog entries at runtime.
+
+  These edits are **actively used by the compliance check itself**, not just displayed
+  here: on every check run, `agent_based/monitoring_compliance.py` reads the same
+  `custom_catalog.json` and feeds each entry's "Matches" (case-insensitive regexes) into
+  its token-resolution logic — exactly like a host-specific entry in the "Custom
+  capability mappings" check parameter already does, and checked before the built-in
+  `ALIASES`/`_SIGNATURES_RAW` tables (a host-specific mapping still wins over a dashboard
+  entry for the same token). The entry's title/hint are used in the check's finding
+  messages too. Disable this per host via the new "Ignore the Known Catalog dashboard's
+  custom entries" check parameter if a host shouldn't pick up site-wide dashboard entries.
+  Deleting a *built-in* entry still only hides it from this catalog view — its own
+  built-in detection logic is unaffected (there's nothing to "undo" there); deleting a
+  *custom* entry removes it, including its detection rule.
+
+The dashboard (`web/htdocs/monitoring_compliance/`) reads the Capability Database and the
+built-in part of the Known Catalog live via a small JSON AJAX endpoint
+(`web/plugins/sidebar/monitoring_compliance.py`, reachable at
+`/<site>/check_mk/monitoring_compliance_data.py`) — no special-agent run required to view
+it, though the "Report capability database statistics" / "Report known catalog" options
+still control the two summary *services* described above. Catalog edits are stored in
+`$OMD_ROOT/var/monitoring_compliance/custom_catalog.json` (CSRF-protected writes, same
+mechanism as every other state-changing AJAX action in Checkmk's own GUI; patterns are
+validated as compilable regexes when saved) and read directly by both the dashboard and the
+check itself.
+
 ## Deployment
 
 - The special agent runs server-side and reads host labels, HW/SW inventory
@@ -67,6 +107,30 @@ mkp enable monitoring_compliance 1.5.9
 
 ## Changelog
 
+- **1.6.2** — The Known Catalog dashboard's custom entries are now actively used for
+  detection, not just displayed. `agent_based/monitoring_compliance.py` reads
+  `custom_catalog.json` on every check run and feeds its patterns/titles/hints into the
+  same token-resolution logic the "Custom capability mappings" check parameter already
+  uses (host-specific mappings there still take precedence for the same token). New
+  "Ignore the Known Catalog dashboard's custom entries" check parameter to opt a host out.
+  Patterns are now validated as compilable regexes when saved from the dashboard. See the
+  updated "GUI Dashboard" section for the exact precedence rules.
+- **1.6.1** — Dashboard follow-ups:
+  - The dashboard's tables now use the full browser width instead of a fixed max-width
+    column.
+  - The Known Catalog is now editable: add/edit/delete entries directly from the
+    dashboard ("+ Add application" and per-row Edit/Delete), stored in
+    `var/monitoring_compliance/custom_catalog.json` and layered on top of the built-in
+    catalog tables. Availability is still re-checked against `cmk -L`, so a plug-in
+    provided by a newly uploaded MKP is picked up for custom entries the same way it is
+    for built-in ones. See the updated "GUI Dashboard" section for the scope of what
+    editing here does (and does not) affect.
+- **1.6.0** — Added a **Monitoring Compliance** sidebar snap-in linking to a new,
+  standalone dashboard page (`web/htdocs/monitoring_compliance/`) that lists the
+  Capability Database and Known Catalog in full, browsable/searchable/sortable form —
+  fed live by a read-only JSON AJAX endpoint
+  (`web/plugins/sidebar/monitoring_compliance.py`), no special-agent run required to view
+  it. See the new "GUI Dashboard" section above.
 - **1.5.28** — Consolidated fixes for false positives/negatives in the
   capability correlation logic (supersedes the 1.5.27 release; internal
   test-cycle version bumps in between are not listed individually):
