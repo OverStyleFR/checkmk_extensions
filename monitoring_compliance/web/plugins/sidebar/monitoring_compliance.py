@@ -30,8 +30,23 @@ It shows two things the check services themselves only summarize in plain-text n
 Both are read directly by this AJAX endpoint (it runs as the site user in the GUI process,
 so it can read the database file and shell out to ``cmk -L`` itself) -- no special agent run
 or check service needed to view them. The Capability Database is always read-only here; the
-Known Catalog additionally accepts writes for its custom-entries layer (CSRF-protected, see
-``MonitoringComplianceData`` below).
+Known Catalog additionally accepts writes for its custom-entries layer (permission- and
+CSRF-protected, see ``MonitoringComplianceData`` below). A third, tiny "theme" action reports
+Checkmk's own light/dark theme setting (see ``_current_ui_theme``) so the dashboard's CSS can
+match it instead of only the browser's OS-level preference.
+
+Any logged-in user (any role) can view both tabs -- same as any other Checkmk page. Editing
+the Known Catalog requires the ``wato.edit`` permission ("Setup: make changes"), which only
+the built-in "admin" role has by default; the dashboard hides the Add/Edit/Delete controls
+for anyone without it (via the "catalog" action's ``can_edit`` flag), and the AJAX endpoint
+itself enforces the same permission server-side regardless of what the UI shows -- the
+former is a convenience, the latter is the actual boundary. See ``_EDIT_PERMISSION``.
+
+The sidebar snap-in's default link opens the dashboard with ``target="main"`` -- the name
+of the iframe Checkmk's own frameset uses for its main content area -- so it loads inside
+Checkmk itself (sidebar and top bar stay put), exactly like any built-in sidebar link. A
+small secondary "↗" link next to it opens the same URL with ``target="_blank"`` instead,
+for opening it in a separate browser tab.
 
 Known Catalog editing
 ----------------------
@@ -60,6 +75,13 @@ built-in ``TITLES``) and overrides an existing one (built-in or custom) with the
 token -- and its ``patterns`` are validated as compilable regexes when saved (see
 ``_save_catalog_entry``), since a bad pattern would otherwise just silently never match at
 check time.
+
+The Capability Database tab's "-> Known Catalog" row action (shown per row when
+``can_edit``, see ``_load_capability_db``'s ``can_edit`` field) is just a convenience
+front-end for the same ``catalog_save`` action, pre-filled from that row: either merges
+the capability's name into an existing entry's ``patterns`` as an extra match, or opens
+the same Add form pre-filled with a new entry (see ``openAdoptModal``/
+``submitAdoptModal`` in app.js). There's no separate server-side action for it.
 
 Packaging / loading
 --------------------
@@ -94,8 +116,21 @@ from cmk.gui.config import Config
 from cmk.gui.htmllib.html import html
 from cmk.gui.http import request
 from cmk.gui.i18n import _
+from cmk.gui.logged_in import user
 from cmk.gui.pages import AjaxPage, PageContext, PageEndpoint, PageResult, page_registry
+from cmk.gui.theme.current_theme import theme as cmk_theme
 from cmk.gui.utils.csrf_token import check_csrf_token
+
+# The permission gate for catalog_save/catalog_delete: the same "Setup: make changes"
+# permission cmk.gui.watolib itself checks everywhere before writing configuration (e.g.
+# cmk.gui.watolib.mode._base, cmk.gui.watolib.users -- verified directly against a real
+# site's source). Editing the Known Catalog is exactly that kind of change, just stored
+# in custom_catalog.json instead of a WATO .mk file, so gating it on the same permission
+# is the natural fit: by default only the built-in "admin" role has it, "user"/"guest"
+# do not -- reusing it also means an admin's own Setup role customizations apply here
+# automatically, instead of inventing a separate, extension-specific permission that
+# would need its own entry in every role.
+_EDIT_PERMISSION = "wato.edit"
 
 # --- Sidebar API -----------------------------------------------------------
 # These names are injected into this module's globals by load_web_plugins().
@@ -146,6 +181,33 @@ def _current_csrf_token() -> str | None:
         return None
 
 
+def _can_edit_catalog() -> bool:
+    # Same defensive try/except as _current_csrf_token()/_current_ui_theme() (no Flask
+    # request context -> RuntimeError, e.g. this extension's own build smoke test
+    # importing the module directly) -- but fails *closed* here (False, edit UI hidden)
+    # rather than open, since this guards a permission check rather than a cosmetic.
+    try:
+        return user.may(_EDIT_PERMISSION)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _current_ui_theme() -> str:
+    """Maps Checkmk's own theme setting onto the simple "light"/"dark" split the
+    dashboard's CSS keys off. ``cmk.gui.theme.current_theme.theme`` is the exact
+    request-local object Checkmk's own HTML generator reads to set
+    ``<body data-theme="...">`` on every page it renders (see
+    ``cmk.gui.htmllib.html.HTMLGenerator``) -- reusing it here means the dashboard
+    follows whatever the logged-in user (or, absent a per-user override, the site's
+    global default) actually has configured, not just the browser's OS-level
+    prefers-color-scheme, which may well disagree with it.
+    """
+    try:
+        return "dark" if cmk_theme.get() == "modern-dark" else "light"
+    except Exception:  # noqa: BLE001 - never break the page over a theme lookup hiccup
+        return "light"
+
+
 def _capability_db_path() -> Path:
     # Mirrors agent_based/monitoring_compliance.py's _db_path() default exactly. A custom
     # "Alternative capability database path" configured in the special-agent rule is
@@ -166,14 +228,17 @@ def _human_size(num: float) -> str:
 def _load_capability_db() -> dict[str, Any]:
     path = _capability_db_path()
     if not path.is_file():
-        return {"exists": False, "path": str(path)}
+        return {"exists": False, "path": str(path), "can_edit": _can_edit_catalog()}
 
     try:
         size_bytes = path.stat().st_size
         with path.open(encoding="utf-8") as fh:
             db = json.load(fh)
     except Exception as exc:  # noqa: BLE001
-        return {"exists": True, "path": str(path), "error": str(exc)}
+        return {
+            "exists": True, "path": str(path), "error": str(exc),
+            "can_edit": _can_edit_catalog(),
+        }
 
     caps = db.get("capabilities", {}) if isinstance(db, dict) else {}
     by_type: dict[str, int] = {}
@@ -224,6 +289,10 @@ def _load_capability_db() -> dict[str, Any]:
         "tokens": len(tokens),
         "by_type": by_type,
         "entries": entries,
+        # Lets the dashboard show the "-> Known Catalog" adopt action per row only for a
+        # user who could actually save the result -- see _can_edit_catalog()/
+        # _EDIT_PERMISSION. Same convenience-only flag as the "catalog" action's.
+        "can_edit": _can_edit_catalog(),
     }
 
 
@@ -446,6 +515,11 @@ def _load_known_catalog() -> dict[str, Any]:
         "entries": entries,
         "errors": errors,
         "csrf_token": _current_csrf_token(),
+        # Lets the dashboard hide Add/Edit/Delete for a merely-logged-in user instead of
+        # showing controls that would just fail on click -- the real enforcement is the
+        # user.need_permission(_EDIT_PERMISSION) check in catalog_save/catalog_delete
+        # below; this is only ever a UI convenience, never itself a security boundary.
+        "can_edit": _can_edit_catalog(),
     }
 
 
@@ -481,11 +555,25 @@ class MonitoringComplianceSnapin(SidebarSnapin):
             write_snapin_exception(exc)
 
     def _render(self) -> None:
+        # Default: target="main" -- the name of the iframe Checkmk's own frameset uses
+        # for its main content area (confirmed against a real site:
+        # <iframe src="welcome.py" name="main">, the same target every built-in sidebar
+        # link/snap-in uses to open a page "inside" Checkmk rather than replacing the
+        # whole browser tab). The small secondary link opens the same URL with
+        # target="_blank" instead, for the times a separate browser tab is genuinely
+        # wanted (e.g. to keep it open side-by-side with a different Checkmk page).
         html.open_div(style="padding:2px 0;")
-        html.open_a(href=_URL_DASHBOARD, target="_blank",
-                    title=_("Open the Monitoring Compliance dashboard in a new tab"))
+        html.open_div(style="display:flex;align-items:center;gap:6px;")
+        html.open_a(href=_URL_DASHBOARD, target="main",
+                    title=_("Open the Monitoring Compliance dashboard here in Checkmk"))
         html.write_text_permissive(_("\U0001f4cb Compliance Dashboard"))
         html.close_a()
+        html.open_a(href=_URL_DASHBOARD, target="_blank",
+                    style="opacity:0.7;text-decoration:none;",
+                    title=_("Open the Monitoring Compliance dashboard in a new browser tab"))
+        html.write_text_permissive("↗")
+        html.close_a()
+        html.close_div()
         html.open_div(style="color:#888;font-size:90%;margin-top:4px;")
         html.write_text_permissive(
             _("Capability Database & Known Catalog, browsable and searchable."))
@@ -507,23 +595,42 @@ class MonitoringComplianceData(AjaxPage):
     {"result_code", "result", "severity"} and serializes it -- no manual JSON encoding or
     content-type handling needed here.
 
-    "capdb"/"catalog" are read-only (no CSRF check). "catalog_save"/"catalog_delete" write
-    to custom_catalog.json and require the CSRF token the dashboard got from its last
-    "catalog" load (see _current_csrf_token()) -- matching every other state-changing
-    action in Checkmk's own GUI.
+    "bootstrap"/"theme"/"capdb"/"catalog" are read-only and only need a logged-in session
+    (any role -- e.g. "user"/"guest" get read access, matching a normal Checkmk view).
+    "bootstrap" is what the dashboard's initial page load actually calls: the same three
+    results as "theme"+"capdb"+"catalog" combined into one request. "catalog_save"/
+    "catalog_delete" additionally require the "wato.edit" permission (see
+    _EDIT_PERMISSION) -- by default only the "admin" role has it -- and the CSRF token
+    the dashboard got from its last "catalog" load (see _current_csrf_token()), matching
+    every other state-changing action in Checkmk's own GUI.
     """
 
     @override
     def page(self, ctx: PageContext) -> PageResult:
         action = request.get_ascii_input_mandatory("action")
+        if action == "bootstrap":
+            # Combines "theme"+"capdb"+"catalog" into the one round trip the dashboard's
+            # initial page load actually needs (each of those is otherwise a full,
+            # separate Checkmk WSGI request -- session/auth setup and all -- so folding
+            # three into one is a real speed-up, not just saved bytes). Reloading just
+            # the catalog after an edit still uses the plain "catalog" action below.
+            return {
+                "theme": _current_ui_theme(),
+                "capdb": _load_capability_db(),
+                "catalog": _load_known_catalog(),
+            }
+        if action == "theme":
+            return {"theme": _current_ui_theme()}
         if action == "capdb":
             return _load_capability_db()
         if action == "catalog":
             return _load_known_catalog()
         if action == "catalog_save":
+            user.need_permission(_EDIT_PERMISSION)
             check_csrf_token()
             return _save_catalog_entry()
         if action == "catalog_delete":
+            user.need_permission(_EDIT_PERMISSION)
             check_csrf_token()
             return _delete_catalog_entry()
         raise MKGeneralException(_("Unknown action: %s") % action)

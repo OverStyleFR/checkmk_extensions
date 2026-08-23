@@ -19,6 +19,14 @@
   // explicitly instead.
   var csrfToken = null;
 
+  function authRequiredError() {
+    var err = new Error(
+      "You are not logged in to this Checkmk site. Please log in, then reload this page."
+    );
+    err.authRequired = true;
+    return err;
+  }
+
   function handleAjaxResponse(promise) {
     return promise
       .catch(function () {
@@ -29,6 +37,21 @@
         );
       })
       .then(function (resp) {
+        // An unauthenticated request gets redirected to Checkmk's login page -- fetch()
+        // follows that transparently, so what lands here is a 200 OK whose body is the
+        // login page's HTML, not our JSON. Detected two ways: the final URL now names
+        // login.py (fetch's `resp.url` reflects the post-redirect URL), or -- as a
+        // fallback covering any other non-JSON response -- the content-type isn't JSON.
+        // Either way this is a distinct, expected condition, not a real error: it gets a
+        // dedicated friendly prompt (see showAuthRequired()) instead of the generic red
+        // error banner.
+        if (/\/login\.py(?:[?#]|$)/.test(resp.url)) {
+          throw authRequiredError();
+        }
+        var contentType = resp.headers.get("content-type") || "";
+        if (contentType.indexOf("json") === -1) {
+          throw authRequiredError();
+        }
         return resp.json().catch(function () {
           throw new Error("Unexpected response from the site (not valid JSON).");
         });
@@ -298,6 +321,20 @@
       { key: "last_seen", label: "Last seen", sortValue: function (r) { return r.last_seen; },
         render: function (r) { return fmtDate(r.last_seen); } },
     ];
+    if (data.can_edit) {
+      // Row identity for the delegated click handler below is an index into data.entries
+      // (assigned once, up front) rather than encoding type/name/token into the DOM --
+      // a capability's raw "name" is arbitrary text (a process/package name), unsafe to
+      // pack into a delimited attribute value.
+      data.entries.forEach(function (r, i) { r._idx = i; });
+      columns.push({
+        key: "_adopt", label: "Actions", sortable: false, sortValue: function () { return 0; },
+        render: function (r) {
+          return '<button type="button" class="btn small" data-adopt-idx="' + r._idx +
+            '">&rarr; Known Catalog</button>';
+        },
+      });
+    }
 
     var ctrl = makeTableController({
       rows: data.entries,
@@ -322,6 +359,16 @@
       count.textContent = ctrl.filtered().length + " / " + data.entries.length + " entries";
     }
 
+    // Delegated on the (stable) tableHost container, same reasoning as the Known
+    // Catalog table's row actions: a header-click re-sort replaces the row buttons via
+    // renderTable's own internal rerender, not through applyFilters.
+    tableHost.addEventListener("click", function (ev) {
+      var btn = ev.target.closest("[data-adopt-idx]");
+      if (!btn) return;
+      var row = data.entries[Number(btn.getAttribute("data-adopt-idx"))];
+      if (row) openAdoptModal(row);
+    });
+
     search.addEventListener("input", applyFilters);
     typeSelect.addEventListener("change", applyFilters);
     statusSelect.addEventListener("change", applyFilters);
@@ -330,9 +377,15 @@
 
   // -- Known Catalog --------------------------------------------------------
 
+  // Last-loaded catalog response, kept around so the Capability Database tab's "Adopt
+  // into Known Catalog" action can offer existing entries to assign to without a
+  // separate fetch (both tabs load together via the "bootstrap" action anyway).
+  var lastCatalogData = null;
+
   function loadCatalog() {
     return apiGet("catalog").then(function (data) {
       csrfToken = data.csrf_token || csrfToken;
+      lastCatalogData = data;
       renderCatalog(data);
       return data;
     });
@@ -366,12 +419,18 @@
     [["", "All"], ["available", "Monitorable"], ["unavailable", "Not available"]].forEach(function (pair) {
       statusSelect.appendChild(el("option", { value: pair[0], text: pair[1] }));
     });
-    var addBtn = el("button", { type: "button", class: "btn primary", text: "+ Add application" });
-    addBtn.addEventListener("click", function () { openCatalogModal(null); });
+    // Add/Edit/Delete require the "wato.edit" permission server-side regardless of what
+    // this UI shows -- can_edit only decides whether to show controls that would
+    // otherwise just fail with a permission error on click. See _EDIT_PERMISSION in
+    // web/plugins/sidebar/monitoring_compliance.py for the actual enforcement.
     var count = el("span", { class: "count" });
     controls.appendChild(search);
     controls.appendChild(statusSelect);
-    controls.appendChild(addBtn);
+    if (data.can_edit) {
+      var addBtn = el("button", { type: "button", class: "btn primary", text: "+ Add application" });
+      addBtn.addEventListener("click", function () { openCatalogModal(null); });
+      controls.appendChild(addBtn);
+    }
     controls.appendChild(count);
     content.appendChild(controls);
 
@@ -379,8 +438,8 @@
       content.appendChild(el("div", { class: "empty-state", html:
         "Known catalog is empty (catalog tables unavailable, or the " +
         "&ldquo;Report known catalog&rdquo; option is not enabled in the " +
-        "&ldquo;Checkmk Monitoring Compliance&rdquo; special-agent rule). You can still add " +
-        "your own entries above."
+        "&ldquo;Checkmk Monitoring Compliance&rdquo; special-agent rule)." +
+        (data.can_edit ? " You can still add your own entries above." : "")
       }));
       return;
     }
@@ -410,7 +469,10 @@
         } },
       { key: "hint", label: "Deployment hint", sortValue: function (r) { return r.hint; },
         render: function (r) { return r.hint ? escapeHtml(r.hint) : '<span class="muted">–</span>'; } },
-      { key: "_actions", label: "Actions", sortable: false, sortValue: function () { return 0; },
+    ];
+    if (data.can_edit) {
+      columns.push({
+        key: "_actions", label: "Actions", sortable: false, sortValue: function () { return 0; },
         render: function (r) {
           return (
             '<span class="row-actions">' +
@@ -418,8 +480,9 @@
             '<button type="button" class="btn small danger" data-delete="' + escapeHtml(r.token) + '">Delete</button>' +
             "</span>"
           );
-        } },
-    ];
+        },
+      });
+    }
 
     var ctrl = makeTableController({
       rows: data.entries,
@@ -504,19 +567,23 @@
     });
   }
 
-  function openCatalogModal(entry) {
-    catalogEditingToken = entry ? entry.token : null;
+  function openCatalogModal(entry, opts) {
+    // opts.forceAdd: prefill fields from `entry` (e.g. from the Capability Database's
+    // "Adopt into Known Catalog" action, see openAdoptModal below) but still treat it as
+    // adding a brand-new entry -- token stays editable, unlike editing a real existing one.
+    var isEdit = !!entry && !(opts && opts.forceAdd);
+    catalogEditingToken = isEdit ? entry.token : null;
     document.getElementById("catalog-modal-title").textContent =
-      entry ? "Edit application" : "Add application";
+      isEdit ? "Edit application" : "Add application";
     catalogModalError.hidden = true;
     catalogModalError.textContent = "";
     catalogFields.token.value = entry ? entry.token : "";
-    catalogFields.token.disabled = !!entry;
+    catalogFields.token.disabled = isEdit;
     catalogFields.title.value = entry ? entry.title : "";
     catalogFields.patterns.value = entry ? entry.patterns.join("\n") : "";
     catalogFields.hint.value = entry ? entry.hint : "";
     catalogModal.hidden = false;
-    (entry ? catalogFields.title : catalogFields.token).focus();
+    (isEdit ? catalogFields.title : catalogFields.token).focus();
   }
 
   function closeCatalogModal() {
@@ -545,6 +612,107 @@
       .then(function () { saveBtn.disabled = false; }, function () { saveBtn.disabled = false; });
   }
 
+  // -- Capability Database -> Known Catalog "adopt" flow ----------------------
+  // Only reachable via the capdb table's "-> Known Catalog" button, itself only shown
+  // when data.can_edit is true (see renderCapdb) -- but the actual write still goes
+  // through catalog_save, which enforces the wato.edit permission server-side regardless.
+
+  var adoptModal = null;
+  var adoptTargetSelect = null;
+  var adoptModalError = null;
+  var adoptContext = null; // the capdb row {type, name, token} being adopted
+
+  function initAdoptModal() {
+    adoptModal = document.getElementById("adopt-modal");
+    adoptTargetSelect = document.getElementById("adopt-target-select");
+    adoptModalError = document.getElementById("adopt-modal-error");
+    document.getElementById("adopt-modal-cancel").addEventListener("click", closeAdoptModal);
+    document.getElementById("adopt-modal-continue").addEventListener("click", submitAdoptModal);
+    adoptModal.addEventListener("click", function (ev) {
+      if (ev.target === adoptModal) closeAdoptModal();
+    });
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && !adoptModal.hidden) closeAdoptModal();
+    });
+    adoptTargetSelect.addEventListener("change", function () {
+      document.getElementById("adopt-target-hint").textContent = adoptTargetSelect.value
+        ? "Adds this capability's name as an additional match on the selected entry " +
+          "(its title/hint are left unchanged)."
+        : "Creates a brand-new Known Catalog entry, pre-filled from this capability.";
+    });
+  }
+
+  function openAdoptModal(row) {
+    adoptContext = row;
+    document.getElementById("adopt-modal-info").textContent =
+      row.type + " · " + row.name + (row.token ? " · token: " + row.token : "");
+    adoptTargetSelect.innerHTML = "";
+    adoptTargetSelect.appendChild(el("option", { value: "", text: "+ Create new Known Catalog entry" }));
+    var entries = (lastCatalogData && lastCatalogData.entries) || [];
+    entries.slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+      .forEach(function (e) {
+        adoptTargetSelect.appendChild(el("option", { value: e.token, text: e.title + " [" + e.token + "]" }));
+      });
+    document.getElementById("adopt-target-hint").textContent =
+      "Creates a brand-new Known Catalog entry, pre-filled from this capability.";
+    adoptModalError.hidden = true;
+    adoptModalError.textContent = "";
+    adoptModal.hidden = false;
+  }
+
+  function closeAdoptModal() {
+    adoptModal.hidden = true;
+    adoptContext = null;
+  }
+
+  function submitAdoptModal() {
+    var targetToken = adoptTargetSelect.value;
+
+    if (!targetToken) {
+      // Create new: hand off to the normal Add/Edit modal, prefilled. The capability's
+      // own token is only usable as a starting guess if it already looks like a valid
+      // catalog token (lowercase/digits/underscore) -- otherwise leave it blank for the
+      // admin to fill in themselves rather than pre-filling something save would reject.
+      var guessedToken = /^[a-z][a-z0-9_]{1,39}$/.test(adoptContext.token || "")
+        ? adoptContext.token
+        : "";
+      closeAdoptModal();
+      switchToTab("catalog");
+      openCatalogModal({ token: guessedToken, title: "", patterns: [adoptContext.name], hint: "" },
+        { forceAdd: true });
+      return;
+    }
+
+    // Assign to an existing entry: append this capability's name as an additional match,
+    // keeping that entry's title/hint untouched. catalog_save is an upsert keyed by
+    // token, so re-sending the existing title/hint alongside the merged patterns is a
+    // safe no-op update to those fields.
+    var entries = (lastCatalogData && lastCatalogData.entries) || [];
+    var existing = entries.filter(function (e) { return e.token === targetToken; })[0];
+    if (!existing) return;
+    var patterns = existing.patterns.slice();
+    if (patterns.indexOf(adoptContext.name) === -1) patterns.push(adoptContext.name);
+
+    var continueBtn = document.getElementById("adopt-modal-continue");
+    continueBtn.disabled = true;
+    apiPost("catalog_save", {
+      token: existing.token,
+      title: existing.title,
+      patterns: patterns.join("\n"),
+      hint: existing.hint,
+    })
+      .then(function () {
+        closeAdoptModal();
+        switchToTab("catalog");
+        return loadCatalog();
+      })
+      .catch(function (err) {
+        adoptModalError.textContent = err.message || String(err);
+        adoptModalError.hidden = false;
+      })
+      .then(function () { continueBtn.disabled = false; }, function () { continueBtn.disabled = false; });
+  }
+
   // -- tabs + bootstrap -------------------------------------------------------
 
   function showError(containerId, err) {
@@ -552,23 +720,77 @@
       '<div class="error-banner">' + escapeHtml(err.message || String(err)) + "</div>";
   }
 
-  function initTabs() {
-    var buttons = document.querySelectorAll("nav.tabs button");
-    buttons.forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        buttons.forEach(function (b) { b.classList.remove("active"); });
-        document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("active"); });
-        btn.classList.add("active");
-        document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
-      });
+  var authPromptShown = false;
+
+  function showAuthRequired() {
+    // Deliberately NOT the red error-banner treatment: being logged out is an expected,
+    // unremarkable situation (a link shared around, a session that timed out), not
+    // something broken -- it gets the same calm empty-state look as e.g. "no capability
+    // database yet", plus a direct login link that returns here afterwards.
+    if (authPromptShown) return;
+    authPromptShown = true;
+    var loginUrl =
+      "../login.py?_origtarget=" + encodeURIComponent(location.pathname + location.search);
+    var html =
+      '<div class="empty-state">' +
+      "You need to be logged in to this Checkmk site to view this dashboard." +
+      "<br><br>" +
+      '<a class="btn primary" href="' + escapeHtml(loginUrl) + '">Log in</a>' +
+      "</div>";
+    document.getElementById("capdb-content").innerHTML = html;
+    document.getElementById("catalog-content").innerHTML = html;
+  }
+
+  function switchToTab(tabName) {
+    document.querySelectorAll("nav.tabs button").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tab === tabName);
     });
+    document.querySelectorAll(".panel").forEach(function (p) {
+      p.classList.toggle("active", p.id === "panel-" + tabName);
+    });
+  }
+
+  function initTabs() {
+    document.querySelectorAll("nav.tabs button").forEach(function (btn) {
+      btn.addEventListener("click", function () { switchToTab(btn.dataset.tab); });
+    });
+  }
+
+  function applyTheme(themeName) {
+    // Mirrors Checkmk's own <body data-theme="facelift|modern-dark"> attribute (see
+    // cmk.gui.htmllib.html.HTMLGenerator), just with the dashboard's own simpler
+    // light/dark vocabulary -- the CSS keys its whole palette off this attribute (see
+    // index.html's <style>), with prefers-color-scheme only as a fallback for the brief
+    // window before this fetch resolves.
+    document.documentElement.setAttribute("data-theme", themeName === "dark" ? "dark" : "light");
   }
 
   function init() {
     initTabs();
     initCatalogModal();
-    apiGet("capdb").then(renderCapdb).catch(function (err) { showError("capdb-content", err); });
-    loadCatalog().catch(function (err) { showError("catalog-content", err); });
+    initAdoptModal();
+    // One combined "bootstrap" round trip for the initial load instead of three separate
+    // theme/capdb/catalog fetches -- each fetch is a full Checkmk WSGI request (session/
+    // auth setup, JSON serialization, ...), and cutting that down to one is a bigger win
+    // than the three individually-fast requests running concurrently already were.
+    // Post-edit reloads still use plain apiGet("catalog") (see loadCatalog()) -- no need
+    // to re-fetch the theme or the capability DB just because a catalog entry changed.
+    apiGet("bootstrap")
+      .then(function (data) {
+        applyTheme(data.theme);
+        renderCapdb(data.capdb);
+        csrfToken = data.catalog.csrf_token || csrfToken;
+        lastCatalogData = data.catalog;
+        renderCatalog(data.catalog);
+      })
+      .catch(function (err) {
+        if (err.authRequired) {
+          showAuthRequired();
+          return;
+        }
+        showError("capdb-content", err);
+        showError("catalog-content", err);
+      });
   }
 
   if (document.readyState === "loading") {

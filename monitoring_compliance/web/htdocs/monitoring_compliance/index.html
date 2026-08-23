@@ -5,45 +5,89 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monitoring Compliance Dashboard</title>
 <style>
+  /*
+   * Palette matched to Checkmk's own two built-in themes ("facelift" = light,
+   * "modern-dark" = dark), sampled directly from a real site's compiled
+   * themes/{facelift,modern-dark}/theme.css (page/panel background, text, border,
+   * the "hot"/primary button green, and the state0/state1/state2 OK/WARN/CRIT colors
+   * Checkmk itself uses everywhere). Driven by a `data-theme` attribute on <html> that
+   * app.js sets from Checkmk's *actual* configured theme (see the "theme" AJAX action
+   * and cmk.gui.theme.current_theme.theme.get() server-side) -- not just the browser's
+   * OS-level prefers-color-scheme, which may well disagree with it. The
+   * prefers-color-scheme block below is only a best-effort fallback for the brief
+   * moment before that JS-set attribute lands.
+   */
   :root {
-    --bg: #f4f6f8;
+    --bg: #f9f9ff;
     --bg-panel: #ffffff;
-    --bg-tile: #ffffff;
-    --border: #d8dee4;
-    --text: #1b232b;
-    --text-muted: #626d78;
-    --accent: #0b64a0;
-    --accent-bg: #e6f1fa;
-    --ok: #12824c;
-    --ok-bg: #e3f6ec;
-    --warn: #9a6300;
-    --warn-bg: #fbf0da;
-    --crit: #b3261e;
-    --crit-bg: #fbe6e4;
-    --row-hover: #f0f4f8;
-    --code-bg: #eef2f5;
+    --bg-tile: #f5f5fb;
+    --border: #cccfdb;
+    --text: #1e262e;
+    --text-muted: rgba(30, 38, 46, 0.65);
+    --accent: #11bc7a;
+    --accent-hover: #13d389;
+    --accent-bg: rgba(17, 188, 122, 0.12);
+    /* #11bc7a itself is under 3:1 against this theme's near-white page/panel
+       background, so small text/underlines that use it as a *foreground* color (not
+       a solid button/badge fill) need this darkened variant instead -- verified with
+       a WCAG contrast check against both --bg and --bg-panel. */
+    --accent-text: #0b764d;
+    --ok: #062e22;
+    --ok-bg: #13d389;
+    --warn: #3d3000;
+    --warn-bg: #ffd703;
+    --crit: #ffffff;
+    --crit-bg: #c83232;
+    --crit-accent: #d33636;
+    --row-hover: rgba(30, 38, 46, 0.05);
+    --code-bg: rgba(30, 38, 46, 0.07);
     --shadow: 0 1px 2px rgba(20, 30, 40, 0.06), 0 1px 6px rgba(20, 30, 40, 0.04);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14181d;
-      --bg-panel: #1c2126;
-      --bg-tile: #21262c;
-      --border: #333b43;
-      --text: #e7ebee;
-      --text-muted: #96a1ab;
-      --accent: #59a8e0;
-      --accent-bg: #1c2e3c;
-      --ok: #52c98b;
-      --ok-bg: #16281f;
-      --warn: #e0b34f;
-      --warn-bg: #2e2712;
-      --crit: #ea6f68;
-      --crit-bg: #331d1c;
-      --row-hover: #262c33;
-      --code-bg: #262c33;
+    :root:not([data-theme="light"]) {
+      --bg: #1c2228;
+      --bg-panel: #20272e;
+      --bg-tile: #20272e;
+      --border: #33393f;
+      --text: #ffffff;
+      --text-muted: rgba(255, 255, 255, 0.55);
+      --accent: #11bc7a;
+      --accent-hover: #13d389;
+      --accent-bg: rgba(17, 188, 122, 0.18);
+      --accent-text: #12c882;
+      --ok: #062e22;
+      --ok-bg: #13d389;
+      --warn: #3d3000;
+      --warn-bg: #ffd703;
+      --crit: #ffffff;
+      --crit-bg: #c83232;
+      --crit-accent: #de6868;
+      --row-hover: rgba(255, 255, 255, 0.06);
+      --code-bg: rgba(255, 255, 255, 0.09);
       --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c2228;
+    --bg-panel: #20272e;
+    --bg-tile: #20272e;
+    --border: #33393f;
+    --text: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.55);
+    --accent: #11bc7a;
+    --accent-hover: #13d389;
+    --accent-bg: rgba(17, 188, 122, 0.18);
+    --accent-text: #12c882;
+    --ok: #062e22;
+    --ok-bg: #13d389;
+    --warn: #3d3000;
+    --warn-bg: #ffd703;
+    --crit: #ffffff;
+    --crit-bg: #c83232;
+    --crit-accent: #de6868;
+    --row-hover: rgba(255, 255, 255, 0.06);
+    --code-bg: rgba(255, 255, 255, 0.09);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -51,7 +95,7 @@
     padding: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
   }
   .wrap { max-width: none; margin: 0; padding: 24px 28px 60px; }
@@ -78,8 +122,8 @@
     margin-bottom: -1px;
   }
   nav.tabs button.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
+    color: var(--accent-text);
+    border-bottom-color: var(--accent-text);
   }
   nav.tabs button:hover:not(.active) { color: var(--text); }
 
@@ -95,7 +139,7 @@
   .tile {
     background: var(--bg-tile);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 12px 14px;
     box-shadow: var(--shadow);
   }
@@ -128,21 +172,25 @@
     align-items: center;
     margin-bottom: 12px;
   }
+  /* Checkmk's own form controls (input/select/textarea) keep a white background with
+     dark text in both its light and dark theme -- verified against a real site's
+     theme.css, which never overrides that base rule for modern-dark. Matched here
+     rather than inventing our own "dark mode input" look. */
   .controls input[type="search"] {
     flex: 1 1 220px;
     padding: 7px 10px;
-    border-radius: 6px;
+    border-radius: 4px;
     border: 1px solid var(--border);
-    background: var(--bg-panel);
-    color: var(--text);
+    background: #fff;
+    color: #1e262e;
     font-size: 13px;
   }
   .controls select {
     padding: 7px 10px;
-    border-radius: 6px;
+    border-radius: 4px;
     border: 1px solid var(--border);
-    background: var(--bg-panel);
-    color: var(--text);
+    background: #fff;
+    color: #1e262e;
     font-size: 13px;
   }
   .controls .count { color: var(--text-muted); font-size: 12px; margin-left: auto; }
@@ -150,7 +198,7 @@
   .table-scroll {
     overflow-x: auto;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     background: var(--bg-panel);
     box-shadow: var(--shadow);
   }
@@ -190,10 +238,13 @@
   td.hosts { max-width: 260px; }
   .muted { color: var(--text-muted); }
 
+  /* Solid-block style deliberately matches Checkmk's own state0/state1/state2
+     OK/WARN/CRIT visuals (bold background + high-contrast text), not a softer tinted
+     badge -- instantly readable as "the Checkmk colors" to anyone who knows the product. */
   .badge {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: 999px;
+    border-radius: 3px;
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -210,7 +261,7 @@
 
   .empty-state {
     border: 1px dashed var(--border);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 28px 20px;
     text-align: center;
     color: var(--text-muted);
@@ -230,7 +281,7 @@
     background: var(--crit-bg);
     color: var(--crit);
     border: 1px solid var(--crit);
-    border-radius: 8px;
+    border-radius: 4px;
     padding: 10px 14px;
     margin-bottom: 16px;
     font-size: 13px;
@@ -242,22 +293,22 @@
     background: var(--bg-panel);
     color: var(--text);
     padding: 7px 14px;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
   }
   .btn:hover { background: var(--row-hover); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.primary:hover { filter: brightness(1.1); }
-  .btn.danger { color: var(--crit); border-color: var(--crit); background: transparent; }
-  .btn.danger:hover { background: var(--crit-bg); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #062e22; font-weight: 700; }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.danger { color: var(--crit-accent); border-color: var(--crit-accent); background: transparent; }
+  .btn.danger:hover { background: var(--crit-bg); border-color: var(--crit-bg); color: var(--crit); }
   .btn.small { padding: 3px 10px; font-size: 12px; }
   .row-actions { display: flex; gap: 6px; white-space: nowrap; }
 
   .badge.custom-tag {
-    color: var(--accent);
+    color: var(--accent-text);
     background: var(--accent-bg);
     margin-left: 6px;
   }
@@ -276,7 +327,7 @@
   .modal {
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 4px;
     padding: 20px 22px 18px;
     width: min(560px, 100%);
     max-height: 88vh;
@@ -290,10 +341,10 @@
   .field input[type="text"], .field textarea {
     width: 100%;
     padding: 7px 9px;
-    border-radius: 6px;
+    border-radius: 4px;
     border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
+    background: #fff;
+    color: #1e262e;
     font-size: 13px;
     font-family: inherit;
   }
@@ -379,6 +430,25 @@
         <button type="submit" class="btn primary" id="catalog-modal-save">Save</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div id="adopt-modal" class="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="adopt-modal-title">
+    <h2 id="adopt-modal-title">Adopt into Known Catalog</h2>
+    <p class="modal-sub" id="adopt-modal-info"></p>
+    <div id="adopt-modal-error" class="modal-error" hidden></div>
+    <div class="field">
+      <label for="adopt-target-select">Known Catalog entry</label>
+      <select id="adopt-target-select"></select>
+      <div class="field-hint" id="adopt-target-hint">
+        Creates a brand-new Known Catalog entry, pre-filled from this capability.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="adopt-modal-cancel">Cancel</button>
+      <button type="button" class="btn primary" id="adopt-modal-continue">Continue</button>
+    </div>
   </div>
 </div>
 

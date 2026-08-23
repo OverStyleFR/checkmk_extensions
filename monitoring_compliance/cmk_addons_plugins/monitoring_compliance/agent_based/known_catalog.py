@@ -29,16 +29,27 @@ from cmk.agent_based.v2 import (
 
 # The catalog knowledge lives in the main check module. Import it; on any
 # failure fall back to empty tables so this plug-in always loads.
+#
+# _load_dashboard_catalog_entries is the same function check_monitoring_compliance()
+# itself uses to fold the Known Catalog dashboard's custom_catalog.json into detection
+# (see monitoring_compliance.py) -- reused here so this informational service lists
+# exactly the same merged catalog (built-in + any dashboard additions/overrides/
+# tombstones) the dashboard's own "Known Catalog" tab shows, instead of only ever the
+# built-in tables.
 try:
     from cmk_addons.plugins.monitoring_compliance.agent_based.monitoring_compliance import (  # noqa: E501
         ALIASES,
         HINTS,
         TITLES,
+        _load_dashboard_catalog_entries,
         _SIGNATURES_RAW,
     )
 except Exception:  # noqa: BLE001
     ALIASES, HINTS, TITLES = {}, {}, {}
     _SIGNATURES_RAW = ()
+
+    def _load_dashboard_catalog_entries() -> Mapping[str, Any]:
+        return {}
 
 
 def _parse(string_table: StringTable) -> Mapping[str, Any] | None:
@@ -73,23 +84,14 @@ def discover_known_catalog(section) -> DiscoveryResult:
         yield Service()
 
 
-def check_known_catalog(section) -> CheckResult:
-    if section is None:
-        return
-
-    available = [str(p) for p in section.get("available_plugins", []) or []]
-    avail_tokens = {_plugin_token(p) for p in available}
-
-    tokens = sorted(TITLES.keys())
-    total = len(tokens)
-    available_count = 0
-    items: list[tuple[bool, str]] = []
-
-    for tok in tokens:
-        title = TITLES.get(tok, tok)
-        is_avail = tok in avail_tokens
-        if is_avail:
-            available_count += 1
+def _merged_catalog() -> dict[str, dict[str, Any]]:
+    """Built-in TITLES/ALIASES/_SIGNATURES_RAW tables, with the Known Catalog
+    dashboard's custom_catalog.json layered on top -- same merge check_monitoring_
+    compliance() applies for detection, and _load_known_catalog() applies for the
+    dashboard's own view. A tombstoned token (dashboard "Delete") is dropped entirely,
+    same semantics as both of those."""
+    merged: dict[str, dict[str, Any]] = {}
+    for tok in TITLES:
         patterns_raw = [p for p, t in _SIGNATURES_RAW if t == tok]
         patterns_raw += sorted({a for a, t in ALIASES.items() if t == tok})
         seen: set[str] = set()
@@ -99,9 +101,51 @@ def check_known_catalog(section) -> CheckResult:
             if cleaned and cleaned not in seen:
                 seen.add(cleaned)
                 patterns.append(cleaned)
+        merged[tok] = {
+            "title": TITLES.get(tok, tok),
+            "patterns": patterns,
+            "custom": False,
+        }
+
+    entries = _load_dashboard_catalog_entries()
+    for tok, override in entries.items():
+        tok = str(tok).strip().lower()
+        if override is None:
+            merged.pop(tok, None)
+            continue
+        if not isinstance(override, dict):
+            continue
+        merged[tok] = {
+            "title": str(override.get("title") or tok),
+            "patterns": [str(p) for p in (override.get("patterns") or []) if str(p).strip()],
+            "custom": True,
+        }
+    return merged
+
+
+def check_known_catalog(section) -> CheckResult:
+    if section is None:
+        return
+
+    available = [str(p) for p in section.get("available_plugins", []) or []]
+    avail_tokens = {_plugin_token(p) for p in available}
+
+    catalog = _merged_catalog()
+    tokens = sorted(catalog.keys())
+    total = len(tokens)
+    available_count = 0
+    items: list[tuple[bool, str]] = []
+
+    for tok in tokens:
+        rec = catalog[tok]
+        title = rec["title"]
+        patterns = rec["patterns"]
+        is_avail = tok in avail_tokens
+        if is_avail:
+            available_count += 1
         status = ("monitorable on this site" if is_avail
                   else "no covering plug-in on this site")
-        note = f"{title} [{tok}] \u2013 {status}"
+        note = f"{title} [{tok}]{' (custom)' if rec['custom'] else ''} \u2013 {status}"
         if patterns:
             note += f"; matches: {', '.join(patterns[:6])}"
         items.append((is_avail, note))
