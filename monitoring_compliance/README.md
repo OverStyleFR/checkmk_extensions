@@ -40,6 +40,74 @@ changes as fast as the HW/SW inventory is refreshed.
 | `Checkmk Capability Database` | Statistics about the persistent capability database (file size, entry counts, distinct hosts/tokens, last update). Enable "Report capability database statistics" in the special-agent rule on exactly one host (e.g. the Checkmk server). |
 | `Checkmk Known Catalog` | Read-only reference listing the application types the detection knows about (alias/signature/title tables), annotated with plug-in availability on this site. Always OK, informational only. Enable "Report known catalog" in the special-agent rule. |
 
+## GUI Dashboard
+
+A **Monitoring Compliance** sidebar snap-in (add it via the sidebar's "Add snap-in"
+button) shows two links: the main one opens the dashboard *inside* Checkmk itself
+(`target="main"`, the same mechanism every built-in sidebar link uses — the sidebar and
+top bar stay put); a small "↗" link next to it opens the same page in a separate browser
+tab instead. Either way it's a standalone dashboard page listing both databases in full,
+browsable and searchable/sortable/filterable form — well beyond what the two services'
+plain-text notices show:
+
+- **Capability Database** tab — every capability ever observed, deduplicated, with type,
+  name, token, the hosts it was seen on, monitorable/monitored flags and first/last-seen
+  timestamps. Each row has a **"→ Known Catalog"** action (admins only) to adopt it: pick
+  an existing Known Catalog entry from a dropdown to add this capability's name to it as
+  an extra match, or create a brand-new entry pre-filled from it. Goes through the exact
+  same `catalog_save` action as editing the Known Catalog directly — see below.
+- **Known Catalog** tab — every application type the detection logic recognizes, with its
+  matching name patterns, a deployment hint, and whether a covering plug-in is currently
+  available on this site (re-checked against `cmk -L`, so a plug-in from a freshly
+  uploaded MKP shows up here too). **Editable**: use "+ Add application" or a row's
+  Edit/Delete buttons to add, change or remove catalog entries at runtime.
+
+  These edits are **actively used by the compliance check itself**, not just displayed
+  here: on every check run, `agent_based/monitoring_compliance.py` reads the same
+  `custom_catalog.json` and feeds each entry's "Matches" (case-insensitive regexes) into
+  its token-resolution logic — exactly like a host-specific entry in the "Custom
+  capability mappings" check parameter already does, and checked before the built-in
+  `ALIASES`/`_SIGNATURES_RAW` tables (a host-specific mapping still wins over a dashboard
+  entry for the same token). The entry's title/hint are used in the check's finding
+  messages too. Disable this per host via the new "Ignore the Known Catalog dashboard's
+  custom entries" check parameter if a host shouldn't pick up site-wide dashboard entries.
+  Deleting a *built-in* entry still only hides it from this catalog view — its own
+  built-in detection logic is unaffected (there's nothing to "undo" there); deleting a
+  *custom* entry removes it, including its detection rule. The **"Checkmk Known
+  Catalog"** service (see below) lists the same merged set too, marking dashboard
+  additions/overrides with "(custom)".
+
+The dashboard (`web/htdocs/monitoring_compliance/`) reads the Capability Database and the
+built-in part of the Known Catalog live via a small JSON AJAX endpoint
+(`web/plugins/sidebar/monitoring_compliance.py`, reachable at
+`/<site>/check_mk/monitoring_compliance_data.py`) — no special-agent run required to view
+it, though the "Report capability database statistics" / "Report known catalog" options
+still control the two summary *services* described above. Catalog edits are stored in
+`$OMD_ROOT/var/monitoring_compliance/custom_catalog.json` (CSRF-protected writes, same
+mechanism as every other state-changing AJAX action in Checkmk's own GUI; patterns are
+validated as compilable regexes when saved) and read directly by the dashboard, the main
+compliance check and the "Checkmk Known Catalog" service alike.
+
+**Governance**: viewing either tab only needs a logged-in Checkmk session (any role — same
+as any other page). Editing the Known Catalog (Add/Edit/Delete) requires Checkmk's own
+`wato.edit` permission ("Setup: make changes"), which only the built-in **admin** role has
+by default — a `user`/`guest`-role user gets a read-only view (the Add/Edit/Delete controls
+are hidden) and the AJAX endpoint enforces the same permission server-side regardless of
+what the UI shows, via `cmk.gui.logged_in.user.need_permission("wato.edit")`. This reuses
+Checkmk's existing role/permission system as-is rather than inventing a separate,
+extension-specific permission — if you've customized which roles have `wato.edit`, that
+customization applies here automatically.
+
+The dashboard's colors/fonts are matched to Checkmk's own two built-in themes
+("facelift"/light and "modern-dark"/dark, sampled directly from a real site's compiled
+theme CSS — page/panel backgrounds, borders, the primary-button green, and the
+OK/WARN/CRIT state colors Checkmk itself uses everywhere) and it follows **Checkmk's own
+configured theme** (per-user setting, or the site default) rather than only the browser's
+OS-level dark/light preference — the dashboard asks the AJAX endpoint for it directly
+(`cmk.gui.theme.current_theme.theme.get()`), so it stays correct even when the two
+disagree. Every text/background color pairing was verified against the WCAG contrast
+ratio it needs (4.5:1 for normal text) in both themes.
+
 ## Deployment
 
 - The special agent runs server-side and reads host labels, HW/SW inventory
@@ -67,6 +135,65 @@ mkp enable monitoring_compliance 1.5.9
 
 ## Changelog
 
+- **1.6.6** — The Capability Database tab now has a "→ Known Catalog" row action
+  (admins only): assign an observed capability to an existing Known Catalog entry as an
+  extra match, or create a brand-new entry pre-filled from it. Uses the same
+  `catalog_save` action as editing the Known Catalog directly — no new server-side
+  action, no new permission.
+- **1.6.5**:
+  - Opening the dashboard while not logged in to the Checkmk site used to show a
+    confusing "Unexpected response from the site (not valid JSON)" red error banner
+    (the login redirect returns an HTML login page, not JSON). Now detected directly
+    and shown as a calm "you need to be logged in" prompt with a direct login link
+    instead.
+  - Faster initial load: the dashboard now fetches theme + Capability Database + Known
+    Catalog in a single combined `bootstrap` request instead of three separate ones —
+    each is otherwise a full Checkmk request (session/auth setup included), so this cuts
+    real, not just perceived, load time. Reloading just the catalog after an edit is
+    unaffected (still its own single request).
+- **1.6.4** — Known Catalog editing is now gated on Checkmk's own `wato.edit`
+  permission ("Setup: make changes"), which only the built-in admin role has by
+  default. A user without it gets a read-only dashboard (Add/Edit/Delete controls
+  hidden); the AJAX endpoint enforces the same permission server-side either way, so
+  hiding the controls is a convenience, not the actual boundary. Viewing both tabs
+  still only needs a logged-in session, any role.
+- **1.6.3**:
+  - The dashboard now matches Checkmk's own visual design (colors/fonts sampled from a
+    real site's facelift/modern-dark theme CSS) and follows Checkmk's own configured
+    theme (per-user setting or site default), not just the browser's OS-level dark/light
+    preference. Every color pairing was checked against WCAG contrast requirements in
+    both themes.
+  - The sidebar snap-in's link now opens the dashboard inside Checkmk itself by default
+    (`target="main"`), with a small secondary "↗" link to open it in a new browser tab
+    instead — previously it only ever opened in a new tab.
+  - Fixed: the **"Checkmk Known Catalog"** service only ever listed the built-in
+    detection tables, never entries added through the dashboard, even though the
+    dashboard's own view and the main compliance check both already picked them up
+    correctly. `known_catalog.py` now merges `custom_catalog.json` the same way.
+- **1.6.2** — The Known Catalog dashboard's custom entries are now actively used for
+  detection, not just displayed. `agent_based/monitoring_compliance.py` reads
+  `custom_catalog.json` on every check run and feeds its patterns/titles/hints into the
+  same token-resolution logic the "Custom capability mappings" check parameter already
+  uses (host-specific mappings there still take precedence for the same token). New
+  "Ignore the Known Catalog dashboard's custom entries" check parameter to opt a host out.
+  Patterns are now validated as compilable regexes when saved from the dashboard. See the
+  updated "GUI Dashboard" section for the exact precedence rules.
+- **1.6.1** — Dashboard follow-ups:
+  - The dashboard's tables now use the full browser width instead of a fixed max-width
+    column.
+  - The Known Catalog is now editable: add/edit/delete entries directly from the
+    dashboard ("+ Add application" and per-row Edit/Delete), stored in
+    `var/monitoring_compliance/custom_catalog.json` and layered on top of the built-in
+    catalog tables. Availability is still re-checked against `cmk -L`, so a plug-in
+    provided by a newly uploaded MKP is picked up for custom entries the same way it is
+    for built-in ones. See the updated "GUI Dashboard" section for the scope of what
+    editing here does (and does not) affect.
+- **1.6.0** — Added a **Monitoring Compliance** sidebar snap-in linking to a new,
+  standalone dashboard page (`web/htdocs/monitoring_compliance/`) that lists the
+  Capability Database and Known Catalog in full, browsable/searchable/sortable form —
+  fed live by a read-only JSON AJAX endpoint
+  (`web/plugins/sidebar/monitoring_compliance.py`), no special-agent run required to view
+  it. See the new "GUI Dashboard" section above.
 - **1.5.28** — Consolidated fixes for false positives/negatives in the
   capability correlation logic (supersedes the 1.5.27 release; internal
   test-cycle version bumps in between are not listed individually):
