@@ -127,7 +127,13 @@ def check_proxmox_backup_server_api_datastore(item, params, section):
             yield Result(state=state,
                          summary="Estimated full in %s" % render.timespan(remaining))
         else:
-            yield Result(state=State.CRIT, summary="Estimated full date has passed")
+            # PBS does not clear/update this field once a growth trend flattens
+            # or reverses (e.g. after pruning), so a past estimated_full_date is
+            # stale forecast data, not a genuine "about to fill up" warning.
+            # Report it informationally instead of forcing CRIT.
+            yield Result(state=State.OK,
+                         notice="Estimated full date has passed (stale forecast, ignored: %s)"
+                         % render.datetime(efd))
 
     if ds.get("comment"):
         yield Result(state=State.OK, notice="Comment: %s" % ds["comment"])
