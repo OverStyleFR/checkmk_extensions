@@ -39,10 +39,5 @@ mkp add <package>-<version>.mkp
 mkp enable <package> <version>
 ```
 
-## Moved packages
-
-- `monitoring_compliance` moved to its own repository:
-  [Gulaschcowboy/checkmk_monitoring_compliance](https://github.com/Gulaschcowboy/checkmk_monitoring_compliance)
-  (it grew well beyond a simple check-plugin MKP and warranted its own history/issues/releases).
 
 
