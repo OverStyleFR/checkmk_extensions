@@ -51,4 +51,5 @@ Then rediscover the host in Checkmk — the unbound services appear.
   - Add bakery rule for automatic plugin deployment.
   - Make parameters of all services configurable.
   - Prefix metrics to avoid collisions with built-in metric definitions.
+  - Implement a fallback for the non-standard installation directory of `unbound-control` and it's config on OPNsense.
 - **1.2.0** — Last upstream release (Jan-Philipp Litza / PLUTEX).
