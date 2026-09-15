@@ -31,24 +31,24 @@ mkp add unbound-2.0.0.mkp
 mkp enable unbound 2.0.0
 ```
 
-### Manual deployment of the agent plug-in (e.g. without bakery (RAW edition) or on *BSD)
+### Manual deployment of the agent plug-in. E.g. without bakery (RAW edition) or on *BSD
 
 Copy ~/local/share/check_mk/agents/plugins/unbound to your unbound host to 
 /usr/lib/check_mk_agent/plugins/unbound
 
 chmod +x /usr/lib/check_mk_agent/plugins/unbound
 
-To Test, run:
+To test, run:
 /usr/lib/check_mk_agent/plugins/unbound
 
 Then rediscover the host in Checkmk — the unbound services appear.
 
 ## Changelog
 
-- **2.0.0** — initial release after forking the unmaintained mkp from (Jan-Philipp Litza / PLUTEX).
+- **2.0.0** — Initial release after forking the unmaintained MKP by Jan-Philipp Litza / PLUTEX.
   - Compatibility with Checkmk 2.5.0 and upcoming 3.0.0.
   - Migrated rulesets/graphing from the legacy API to API v1.
-  -  Add bakelet for automatic plugin deployment.
-  -  Make parameters of all services configurable.
-  -  prefix metrics to avoid collisions with build-in metric definitions.
+  - Add bakery rule for automatic plugin deployment.
+  - Make parameters of all services configurable.
+  - Prefix metrics to avoid collisions with built-in metric definitions.
 - **1.2.0** — Last upstream release (Jan-Philipp Litza / PLUTEX).
