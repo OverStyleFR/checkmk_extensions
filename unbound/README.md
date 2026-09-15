@@ -7,32 +7,9 @@ caching/validating DNS resolver via `unbound-control stats_noreset`: query
 rate, answer types (rate or ratio, e.g. NXDOMAIN/SERVFAIL share), cache hit
 ratio and miss rate, and unwanted reply rate.
 
-This is a maintenance fork of the original, unmaintained
+Replacement for the old and unmaintained
 [PLUTEX/checkmk-unbound](https://github.com/PLUTEX/checkmk-unbound) MKP by
-Jan-Philipp Litza. Upstream has seen no releases addressing current Checkmk
-versions, so we took over maintenance here.
-
-## Changes in this fork (2.0.0)
-
-Upstream 1.2.0 used the legacy `web/plugins/wato` and
-`web/plugins/metrics` GUI plug-in structure (`cmk.gui.valuespec` /
-`cmk.gui.plugins.metrics`). Its `unbound_parameters.py` referenced
-`FixedValue` from `cmk.gui.valuespec` without importing it:
-
-```
-NameError: name 'FixedValue' is not defined
-```
-
-which broke loading the `static_checks:unbound_answers` ruleset (visible as
-a `cmk-update-config` "Rulesets" pre-action error) on current Checkmk
-versions that validate every ruleset's valuespec eagerly.
-
-Rather than just patching the import, this fork migrates the whole
-ruleset/graphing layer to the modern `cmk_addons_plugins` API
-(`cmk.rulesets.v1` and `cmk.graphing.v1`), which is what the legacy
-valuespec-based plug-ins are being replaced by across Checkmk. The
-`agent_based` check logic is unchanged apart from adapting to the new
-parameter shape for the answer-rate-vs-ratio choice.
+Jan-Philipp Litza.
 
 ## Requirements
 
@@ -54,26 +31,24 @@ mkp add unbound-2.0.0.mkp
 mkp enable unbound 2.0.0
 ```
 
-### Deploy the agent plug-in
+### Manual deployment of the agent plug-in (e.g. without bakery (RAW edition) or on *BSD)
 
-```bash
-# on the unbound host
-cp agents/plugins/unbound /usr/lib/check_mk_agent/plugins/unbound
-chmod +x /usr/lib/check_mk_agent/plugins/unbound
-# test:
+Copy ~/local/share/check_mk/agents/plugins/unbound to your unbound host to 
 /usr/lib/check_mk_agent/plugins/unbound
-```
+
+chmod +x /usr/lib/check_mk_agent/plugins/unbound
+
+To Test, run:
+/usr/lib/check_mk_agent/plugins/unbound
 
 Then rediscover the host in Checkmk — the unbound services appear.
 
 ## Changelog
 
-- **2.0.0** — Migrated rulesets/graphing from the legacy `web/plugins/wato`
-  + `web/plugins/metrics` layout to the modern `cmk_addons_plugins`
-  (`cmk.rulesets.v1` / `cmk.graphing.v1`) layout, fixing the
-  `FormSpecNotImplementedError` / `NameError: FixedValue` breakage on
-  current Checkmk versions. Renamed metrics with an `unbound_` prefix to
-  avoid collisions with Checkmk builtin metrics. Added checkman pages.
-  Agent plug-in now falls back to `unbound-control -c <conf>` when the
-  default invocation fails (OPNsense/*BSD).
+- **2.0.0** — initial release after forking the unmaintained mkp from (Jan-Philipp Litza / PLUTEX).
+  - Compatibility with Checkmk 2.5.0 and upcoming 3.0.0.
+  - Migrated rulesets/graphing from the legacy API to API v1.
+  -  Add bakelet for automatic plugin deployment.
+  -  Make parameters of all services configurable.
+  -  prefix metrics to avoid collisions with build-in metric definitions.
 - **1.2.0** — Last upstream release (Jan-Philipp Litza / PLUTEX).
