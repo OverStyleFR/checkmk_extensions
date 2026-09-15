@@ -1,0 +1,21 @@
+title: Unbound: Cache
+agents: linux
+catalog: app/unbound
+license: GPLv2
+distribution: unbound-mkp
+description:
+ Monitors the cache hit ratio and the rate of cache misses of the unbound
+ caching/validating DNS resolver, based on the counters reported by
+ {unbound-control stats_noreset}.
+
+ The hit ratio is computed from the change of the hit and miss counters
+ since the previous check, not from their absolute values, so the service
+ reflects current behaviour instead of the average since the last restart.
+
+ No levels are set by default; configure them via the "Unbound Cache" rule
+ if you want to be alerted on excessive cache misses or a dropping hit
+ ratio.
+
+discovery:
+ One service is created when the cache hit and miss counters are present
+ in the agent output.

@@ -1,0 +1,17 @@
+title: Unbound: Unwanted Replies
+agents: linux
+catalog: app/unbound
+license: GPLv2
+distribution: unbound-mkp
+description:
+ Monitors the rate of unwanted/unsolicited DNS replies received by unbound
+ (replies that could not be matched to an outstanding query), as reported
+ by {unbound-control stats_noreset}. A sustained non-zero rate can indicate
+ cache poisoning attempts or a misconfigured/spoofed upstream.
+
+ Fixed upper levels of 10/100 per second are applied; this check currently
+ has no WATO rule to change them.
+
+discovery:
+ One service is created when the unwanted-replies counter is present in the
+ agent output.

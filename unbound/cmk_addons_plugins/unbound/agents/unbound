@@ -1,0 +1,25 @@
+#!/bin/sh
+# Checkmk agent plug-in for unbound.
+#
+# On most Linux setups, "unbound-control stats_noreset" works with no
+# extra arguments. On OPNsense (FreeBSD), unbound-control fails unless
+# the config file is given explicitly, because it isn't in the default
+# location expected by the unbound-control binary. Try the plain
+# invocation first, then fall back to known OPNsense/*BSD config paths.
+
+echo '<<<unbound:sep(61)>>>'
+
+OUTPUT="$(unbound-control stats_noreset 2>/dev/null)"
+
+if [ -z "$OUTPUT" ]; then
+    for CONF in /var/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf; do
+        if [ -r "$CONF" ]; then
+            OUTPUT="$(unbound-control -c "$CONF" stats_noreset 2>/dev/null)"
+            [ -n "$OUTPUT" ] && break
+        fi
+    done
+fi
+
+echo "$OUTPUT"
+
+echo '<<<>>>'

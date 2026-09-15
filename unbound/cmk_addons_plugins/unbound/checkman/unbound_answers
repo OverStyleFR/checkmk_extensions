@@ -1,0 +1,28 @@
+title: Unbound: Answers
+agents: linux
+catalog: app/unbound
+license: GPLv2
+distribution: unbound-mkp
+description:
+ Monitors the rate of DNS answers returned by the unbound caching/validating
+ resolver, broken down by response code (NOERROR, FORMERR, SERVFAIL,
+ NXDOMAIN, NOTIMPL, REFUSED) plus answers without data.
+
+ By default, upper levels are set on the rate of SERVFAIL and REFUSED
+ answers, since an increase in either usually indicates a problem with
+ upstream resolution or a misbehaving client. Levels for the remaining
+ answer types are off by default and can be configured (either as an
+ absolute rate in queries per second, or as a percentage of all answers)
+ via the "Unbound Answers" rule.
+
+discovery:
+ One service is created when the corresponding rcode counters are present
+ in the agent output.
+
+ These counters ("num.answer.rcode.*") are only emitted by unbound when
+ extended statistics are enabled ("extended-statistics: yes" in
+ unbound.conf; in OPNsense: Services > Unbound DNS > Advanced > "Enable
+ extended statistics"). Without this setting, only the "Unbound Cache"
+ service will be discovered, since it only needs the basic cache
+ hit/miss counters. After enabling extended statistics and restarting
+ unbound, run a new service discovery to pick up "Unbound Answers".

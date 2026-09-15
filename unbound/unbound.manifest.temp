@@ -1,0 +1,23 @@
+{'author': 'Alex Wilms',
+ 'description': 'Monitors the unbound caching/validating DNS resolver via '
+                'agent plugin: answer rates by rcode, cache hit ratio/miss '
+                'rate and unwanted reply rate.\n'
+                '\n'
+                'Agent plugin with bakery rule for Linux. Agent plugin needs '
+                'to deployed manually on *BSD, e.g. OPNsense',
+ 'download_url': 'https://github.com/Gulaschcowboy/checkmk_extensions',
+ 'files': {'cmk_addons_plugins': ['unbound/agent_based/unbound.py',
+                                   'unbound/agents/unbound',
+                                   'unbound/bakery/bakery_plugin_unbound.py',
+                                   'unbound/checkman/unbound_answers',
+                                   'unbound/checkman/unbound_cache',
+                                   'unbound/checkman/unbound_unwanted_replies',
+                                   'unbound/graphing/unbound.py',
+                                   'unbound/rulesets/agent_config_unbound.py',
+                                   'unbound/rulesets/unbound.py']},
+ 'name': 'unbound',
+ 'title': 'Unbound checks und statistics (agent-based + bakery)',
+ 'version': '2.0.0',
+ 'version.min_required': '2.3.0b1',
+ 'version.packaged': 'hermes',
+ 'version.usable_until': None}
