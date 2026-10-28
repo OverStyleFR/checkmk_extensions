@@ -10,16 +10,27 @@ reason=""
 # Method 1: needrestart (preferred, comprehensive)
 if command -v needrestart >/dev/null 2>&1; then
     nr_output=$(needrestart -b 2>/dev/null)
-    ksta=$(echo "$nr_output" | grep "^NEEDRESTART-KSTA:" | awk '{print $2}')
-    if [ "$ksta" != "0" ] && [ -n "$ksta" ]; then
+    kcur=$(echo "$nr_output" | grep "^NEEDRESTART-KCUR:" | awk '{print $2}')
+    kexp=$(echo "$nr_output" | grep "^NEEDRESTART-KEXP:" | awk '{print $2}')
+    uccur=$(echo "$nr_output" | grep "^NEEDRESTART-UCCUR:" | awk '{print $2}')
+    ucexp=$(echo "$nr_output" | grep "^NEEDRESTART-UCEXP:" | awk '{print $2}')
+
+    # Reboot needed if kernel or microcode differs
+    if [ -n "$kcur" ] && [ -n "$kexp" ] && [ "$kcur" != "$kexp" ]; then
         reboot_required=1
-        kcur=$(echo "$nr_output" | grep "^NEEDRESTART-KCUR:" | awk '{print $2}')
-        kexp=$(echo "$nr_output" | grep "^NEEDRESTART-KEXP:" | awk '{print $2}')
         reason="kernel $kcur -> $kexp"
     fi
+    if [ -n "$uccur" ] && [ -n "$ucexp" ] && [ "$uccur" != "$ucexp" ]; then
+        reboot_required=1
+        if [ -n "$reason" ]; then reason="$reason, "; fi
+        reason="${reason}microcode $uccur -> $ucexp"
+    fi
+
     # Count services needing restart
-    services_count=$(echo "$nr_output" | grep -c "^NEEDRESTART-SVC:" 2>/dev/null || echo 0)
-    containers_count=$(echo "$nr_output" | grep -c "^NEEDRESTART-CONT:" 2>/dev/null || echo 0)
+    services_count=$(echo "$nr_output" | grep -c "^NEEDRESTART-SVC:" 2>/dev/null)
+    services_count=${services_count:-0}
+    containers_count=$(echo "$nr_output" | grep -c "^NEEDRESTART-CONT:" 2>/dev/null)
+    containers_count=${containers_count:-0}
 # Method 2: /run/reboot-required (fallback)
 elif [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then
     reboot_required=1
@@ -50,7 +61,7 @@ if [ $reboot_required -eq 1 ]; then
     fi
 else
     if [ "$services_count" -gt 0 ]; then
-        msg="$services_count service(s) need restart"
+        msg="$services_count service(s) need restart (no full reboot needed)"
     fi
 fi
 
