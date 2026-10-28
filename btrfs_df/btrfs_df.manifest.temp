@@ -1,0 +1,22 @@
+{'author': 'Tom VOITURIER',
+ 'description': 'Agent-based monitoring of redundant btrfs volumes (RAID1/5/6/10/dup) '
+                'with corrected disk usage. On such profiles the standard "Filesystem" '
+                'check reports an inflated usage (size - avail) because of the '
+                'redundancy ratio. The agent plug-in detects redundant btrfs volumes '
+                'and sends size = real_data + avail, so Checkmk reports the real data '
+                'usage. Reuses the standard "Filesystem" check logic: graph, trend, '
+                '"full in X days", inodes and "Filesystem levels" thresholds. Includes '
+                'an Agent Bakery ruleset + bakery plug-in for automated deployment.',
+ 'download_url': 'https://github.com/tomv/checkmk_extensions',
+ 'files': {'cmk_addons_plugins': ['btrfs_df/agents/btrfs_df',
+                                  'btrfs_df/agent_based/btrfs_df.py',
+                                  'btrfs_df/rulesets/agent_config_btrfs_df.py',
+                                  'btrfs_df/bakery/bakery_plugin_btrfs_df.py',
+                                  'btrfs_df/checkman/btrfs_df']},
+ 'name': 'btrfs_df',
+ 'title': 'Btrfs Filesystem (corrected usage for redundant profiles)',
+ 'version': '1.0.0',
+ 'version.min_required': '2.3.0',
+ 'version.packaged': 'hermes',
+ 'version.usable_until': None}
+""" path=/home/tomv/Work/checkmk_extensions/btrfs_df/btrfs_df.manifest.temp

@@ -1,0 +1,25 @@
+title: Btrfs Filesystem
+agents: linux
+catalog: os/storage
+license: GPLv2
+distribution: check_mk
+description:
+ This check monitors the disk usage of redundant btrfs volumes (RAID1, RAID5,
+ RAID6, RAID10, dup) using corrected values. On such profiles, the standard
+ "Filesystem" check reports an inflated usage (size - avail) because of the
+ redundancy ratio, even though only a few GiB of data are actually stored.
+
+ The agent plug-in {btrfs_df} detects redundant btrfs volumes and sends
+ size = real_data + avail, so that Checkmk's standard formula
+ (used = size - avail) reports the real data usage instead.
+
+ The service keeps the same features as the built-in "Filesystem" check:
+ graph, trend, "full in X days", inodes and the same "Filesystem levels"
+ rule (thresholds based on used space).
+
+item:
+ The mountpoint of the volume (e.g. {/mnt/data-raid5}).
+
+discovery:
+ One service {Btrfs Filesystem <mountpoint>} is created for every redundant
+ btrfs volume reported by the {btrfs_df} agent section.
