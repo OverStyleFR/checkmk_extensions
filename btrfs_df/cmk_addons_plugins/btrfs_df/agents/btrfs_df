@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Checkmk agent plug-in: corrected disk usage for redundant btrfs volumes.
+# ---------------------------------------------------------------------------
+# This is the AGENT side. It collects raw data and prints it as a Checkmk
+# agent section; all thresholding, state and output formatting is done by the
+# server-side check plug-in (cmk_addons_plugins/btrfs_df/agent_based/btrfs_df.py).
+#
+# It emits one JSON array under:
+#     <<<btrfs_df:sep(0)>>>
+#
+# Each entry:
+#   {"device": ..., "mountpoint": ..., "size_kb": ..., "used_kb": ...,
+#    "avail_kb": ..., "phys_size_kb": ..., "inodes_total": ..., "inodes_avail": ...}
+#
+# Only redundant btrfs profiles (RAID1/5/6/10/dup) are emitted, where
+# (size - avail) differs from the "used" column reported by df. Simple btrfs
+# volumes are left to the built-in "df" check.
+#
+# Deployment: drop into the agent's plug-in directory:
+#   /usr/lib/check_mk_agent/plugins/btrfs_df
+# The agent runs as root.
+#
+# Requires python3 (standard). Stdlib only.
+# ---------------------------------------------------------------------------
+import json
+import subprocess
+
+
+def btrfs_mounts():
+    """Return list of (device, mountpoint) for btrfs mounts, deduped by device."""
+    seen = set()
+    result = []
+    try:
+        with open("/proc/mounts") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                device, mountpoint, fstype = parts[0], parts[1], parts[2]
+                if fstype != "btrfs":
+                    continue
+                if device in seen:
+                    continue
+                seen.add(device)
+                mp = mountpoint.replace("\\040", " ").replace("\\134", "\\")
+                result.append((device, mp))
+    except OSError:
+        pass
+    return result
+
+
+REDUNDANT_PROFILES = {"RAID1", "RAID5", "RAID6", "RAID10", "dup"}
+
+
+def data_profile(mountpoint):
+    """Return the btrfs data profile name (e.g. 'RAID5', 'single', 'RAID0')."""
+    try:
+        out = subprocess.check_output(
+            ["btrfs", "filesystem", "df", mountpoint],
+            text=True, stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("Data,") or line.startswith("Data "):
+            # "Data, RAID5: total=..." or "Data, single: ..."
+            parts = line.split(",", 1)
+            if len(parts) < 2:
+                continue
+            profile = parts[1].split(":")[0].strip()
+            return profile
+    return None
+
+
+def df_kb(mountpoint):
+    """Return (size_kb, used_kb, avail_kb) from `df -kP`, or None."""
+    try:
+        out = subprocess.check_output(
+            ["df", "-kP", mountpoint], text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    lines = out.strip().splitlines()
+    if len(lines) < 2:
+        return None
+    fields = lines[-1].split()
+    if len(fields) < 6:
+        return None
+    try:
+        size = int(fields[1])
+        used = int(fields[2])
+        avail = int(fields[3])
+    except ValueError:
+        return None
+    return size, used, avail
+
+
+def df_inodes(mountpoint):
+    """Return (inodes_total, inodes_avail) from `df -iP`."""
+    try:
+        out = subprocess.check_output(
+            ["df", "-iP", mountpoint], text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return 0, 0
+    lines = out.strip().splitlines()
+    if len(lines) < 2:
+        return 0, 0
+    fields = lines[-1].split()
+    if len(fields) < 6:
+        return 0, 0
+    try:
+        total = int(fields[1])
+        avail = int(fields[3])
+    except ValueError:
+        return 0, 0
+    return total, avail
+
+
+def main():
+    entries = []
+    for device, mountpoint in btrfs_mounts():
+        profile = data_profile(mountpoint)
+        if profile not in REDUNDANT_PROFILES:
+            continue
+        r = df_kb(mountpoint)
+        if r is None:
+            continue
+        size, used, avail = r
+        itotal, iavail = df_inodes(mountpoint)
+        entries.append(
+            {
+                "device": device,
+                "mountpoint": mountpoint,
+                "size_kb": used + avail,
+                "used_kb": used,
+                "avail_kb": avail,
+                "phys_size_kb": size,
+                "inodes_total": itotal,
+                "inodes_avail": iavail,
+            }
+        )
+    print("<<<btrfs_df:sep(0)>>>")
+    print(json.dumps(entries))
+
+
+if __name__ == "__main__":
+    main()
