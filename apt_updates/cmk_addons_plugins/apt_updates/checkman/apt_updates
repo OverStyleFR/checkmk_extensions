@@ -1,0 +1,38 @@
+title: APT Critical Updates
+agents: linux
+catalog: os/software
+license: GPLv2
+distribution: check_mk
+description:
+ This check monitors the number of upgradable security packages on a Debian
+ host. The data is collected by the agent plug-in {apt_updates}, which runs
+ {apt list --upgradable} and counts packages whose name contains {-security}.
+
+ Thresholds are configurable per host via the rule "APT critical updates".
+
+item:
+ None.
+
+discovery:
+ One service {APT Critical Updates} is created on every host that sends the
+ {apt_updates} agent section.
+
+---
+title: APT All Updates
+agents: linux
+catalog: os/software
+license: GPLv2
+distribution: check_mk
+description:
+ This check monitors the number of all upgradable packages on a Debian host
+ (held packages excluded). The data is collected by the agent plug-in
+ {apt_updates}.
+
+ Thresholds are configurable per host via the rule "APT all updates".
+
+item:
+ None.
+
+discovery:
+ One service {APT All Updates} is created on every host that sends the
+ {apt_updates} agent section.

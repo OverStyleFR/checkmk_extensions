@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Checkmk agent plug-in: APT update counts.
+# ---------------------------------------------------------------------------
+# Collects the number of upgradable packages (all and security/critical) and
+# emits them as a Checkmk agent section. Thresholding is done server-side.
+#
+# Emits:
+#     <<<apt_updates:sep(0)>>>
+#     {"critical": <int>, "total": <int>}
+#
+# Deployment: drop into the agent's plug-in directory:
+#   /usr/lib/check_mk_agent/plugins/apt_updates
+# Runs as root.
+#
+# Requires python3 (standard). Stdlib only.
+# ---------------------------------------------------------------------------
+import json
+import subprocess
+
+
+def hold_packages():
+    try:
+        out = subprocess.check_output(
+            ["apt-mark", "showhold"], text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return set()
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def upgradable():
+    try:
+        out = subprocess.check_output(
+            ["apt", "list", "--upgradable"], text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return []
+    holds = hold_packages()
+    result = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Listing"):
+            continue
+        # format: package/version arch [upgradable from: oldversion]
+        name = line.split("/")[0].strip() if "/" in line else line.split()[0]
+        if name in holds:
+            continue
+        result.append(line)
+    return result
+
+
+def main():
+    lines = upgradable()
+    critical = sum(1 for l in lines if "-security" in l)
+    total = len(lines)
+    print("<<<apt_updates:sep(0)>>>")
+    print(json.dumps({"critical": critical, "total": total}))
+
+
+if __name__ == "__main__":
+    main()

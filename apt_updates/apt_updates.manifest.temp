@@ -1,0 +1,18 @@
+{'author': 'Tom VOITURIER',
+ 'description': 'Agent-based monitoring of APT updates on Debian hosts. Reports '
+                'the number of upgradable security packages and all upgradable '
+                'packages (held packages excluded). Thresholds are configurable '
+                'per host. Includes graphing.',
+ 'download_url': 'https://github.com/tomv/checkmk_extensions',
+ 'files': {'cmk_addons_plugins': ['apt_updates/agents/apt_updates',
+                                  'apt_updates/agent_based/apt_updates.py',
+                                  'apt_updates/rulesets/apt_critical_updates.py',
+                                  'apt_updates/rulesets/apt_all_updates.py',
+                                  'apt_updates/checkman/apt_updates']},
+ 'name': 'apt_updates',
+ 'title': 'APT Updates (critical + all)',
+ 'version': '1.0.0',
+ 'version.min_required': '2.3.0',
+ 'version.packaged': 'hermes',
+ 'version.usable_until': None}
+""" path=/home/tomv/Work/checkmk_extensions/apt_updates/apt_updates.manifest.temp
