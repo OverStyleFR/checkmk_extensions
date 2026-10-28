@@ -10,20 +10,14 @@ reason=""
 # Method 1: needrestart (preferred, comprehensive)
 if command -v needrestart >/dev/null 2>&1; then
     nr_output=$(needrestart -b 2>/dev/null)
-    kcur=$(echo "$nr_output" | grep "^NEEDRESTART-KCUR:" | awk '{print $2}')
-    kexp=$(echo "$nr_output" | grep "^NEEDRESTART-KEXP:" | awk '{print $2}')
-    uccur=$(echo "$nr_output" | grep "^NEEDRESTART-UCCUR:" | awk '{print $2}')
-    ucexp=$(echo "$nr_output" | grep "^NEEDRESTART-UCEXP:" | awk '{print $2}')
+    ksta=$(echo "$nr_output" | grep "^NEEDRESTART-KSTA:" | awk '{print $2}')
 
-    # Reboot needed if kernel or microcode differs
-    if [ -n "$kcur" ] && [ -n "$kexp" ] && [ "$kcur" != "$kexp" ]; then
+    # KSTA: 0=unknown, 1=up-to-date, 2=ABI upgrade, 3=version upgrade
+    if [ "$ksta" -ge 2 ] 2>/dev/null; then
         reboot_required=1
+        kcur=$(echo "$nr_output" | grep "^NEEDRESTART-KCUR:" | awk '{print $2}')
+        kexp=$(echo "$nr_output" | grep "^NEEDRESTART-KEXP:" | awk '{print $2}')
         reason="kernel $kcur -> $kexp"
-    fi
-    if [ -n "$uccur" ] && [ -n "$ucexp" ] && [ "$uccur" != "$ucexp" ]; then
-        reboot_required=1
-        if [ -n "$reason" ]; then reason="$reason, "; fi
-        reason="${reason}microcode $uccur -> $ucexp"
     fi
 
     # Count services needing restart
